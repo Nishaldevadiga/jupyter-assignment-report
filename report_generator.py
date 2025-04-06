@@ -4,6 +4,8 @@ from datetime import datetime
 from fpdf import FPDF
 from io import BytesIO
 from PIL import Image
+import tempfile
+import os
 
 class NotebookReportPDF(FPDF):
     def __init__(self, student_name="", assignment_name=""):
@@ -44,24 +46,29 @@ class NotebookReportPDF(FPDF):
     
     def add_image(self, img_data):
         try:
-            # Handle base64 image data
-            image = BytesIO(base64.b64decode(img_data))
-            pil_img = Image.open(image)
+            # Create a temporary file for the image
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_file:
+                temp_filename = temp_file.name
+                
+                # Decode base64 image data and save to temporary file
+                image_data = base64.b64decode(img_data)
+                temp_file.write(image_data)
             
-            # Calculate dimensions to fit page width while maintaining aspect ratio
-            page_width = self.w - 2 * self.l_margin
-            img_width = min(page_width, pil_img.width)
-            img_height = (pil_img.height * img_width) / pil_img.width
+            # Open the image with PIL to get dimensions
+            with Image.open(temp_filename) as pil_img:
+                # Calculate dimensions to fit page width while maintaining aspect ratio
+                page_width = self.w - 2 * self.l_margin
+                img_width = min(page_width, pil_img.width)
+                img_height = (pil_img.height * img_width) / pil_img.width
             
-            # Save the image to a temporary file
-            temp_img = BytesIO()
-            pil_img.save(temp_img, format='PNG')
-            temp_img.seek(0)
-            
-            # Add the image to the PDF
+            # Add the image to the PDF using the temporary file
             x = self.l_margin + (page_width - img_width) / 2
-            self.image(temp_img, x=x, w=img_width)
+            self.image(temp_filename, x=x, w=img_width)
             self.ln(5)
+            
+            # Clean up the temporary file
+            os.unlink(temp_filename)
+            
         except Exception as e:
             self.set_text_color(255, 0, 0)
             self.multi_cell(0, 5, f"Error displaying image: {str(e)}")
@@ -108,7 +115,7 @@ def process_notebook(notebook_file, student_name, assignment_name):
                     
                     # Handle text/plain output
                     if 'text/plain' in data:
-                        text_content = ''.join(data['text/plain'])
+                        text_content = ''.join(data['text/plain']) if isinstance(data['text/plain'], list) else data['text/plain']
                         pdf.add_output(text_content)
                     
                     # Handle images
@@ -117,7 +124,7 @@ def process_notebook(notebook_file, student_name, assignment_name):
                         
                     # Handle HTML (simplified as text)
                     elif 'text/html' in data:
-                        html_content = ''.join(data['text/html'])
+                        html_content = ''.join(data['text/html']) if isinstance(data['text/html'], list) else data['text/html']
                         pdf.add_output(f"HTML Output: {html_content[:200]}...")
                         
                 # Error output
