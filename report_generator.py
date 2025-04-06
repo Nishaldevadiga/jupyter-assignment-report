@@ -35,8 +35,9 @@ class NotebookReportPDF(FPDF):
         self.ln(5)
     
     def add_markdown(self, text):
-        self.set_font("Arial", "", 11)
-        self.multi_cell(0, 5, text)
+        self.set_font("Arial", "B", 12)  # Changed from 11 to 12 and added bold ("B")
+        self.set_fill_color(245, 245, 250)  # Very light blue/gray background
+        self.multi_cell(0, 5, text, fill=True)
         self.ln(5)
     
     def add_output(self, output_text):
@@ -121,11 +122,9 @@ def process_notebook(notebook_file, student_name, assignment_name):
                     # Handle images
                     if 'image/png' in data:
                         pdf.add_image(data['image/png'])
-                        
-                    # Handle HTML (simplified as text)
-                    elif 'text/html' in data:
-                        html_content = ''.join(data['text/html']) if isinstance(data['text/html'], list) else data['text/html']
-                        pdf.add_output(f"HTML Output: {html_content[:200]}...")
+                    
+                    # Skip HTML output instead of displaying it
+                    # This removes the "HTML Output: ..." text
                         
                 # Error output
                 elif output_type == 'error':
