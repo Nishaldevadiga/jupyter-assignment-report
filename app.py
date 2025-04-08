@@ -18,21 +18,27 @@ def upload_file():
             student_name = request.form.get('student_name', 'Unknown Student')
             assignment_name = request.form.get('assignment_name', 'Unknown Assignment')
             
-            # Process notebook
-            pdf = process_notebook(notebook_file, student_name, assignment_name)
-            
-            # Save to memory
-            pdf_output = BytesIO()
-            pdf.output(pdf_output)
-            pdf_output.seek(0)
-            
-            # Return the PDF file
-            return send_file(
-                pdf_output,
-                as_attachment=True,
-                download_name=f"{student_name}_{assignment_name}_report.pdf",
-                mimetype='application/pdf'
-            )
+            try:
+                # Process notebook
+                pdf = process_notebook(notebook_file, student_name, assignment_name)
+                
+                # Save to BytesIO
+                pdf_output = BytesIO()
+                pdf_bytes = pdf.output(dest='S').encode('latin1')  # Get PDF as bytes
+                pdf_output.write(pdf_bytes)  # Write bytes to BytesIO
+                pdf_output.seek(0)  # Reset pointer to beginning
+                
+                # Return the PDF file
+                return send_file(
+                    pdf_output,
+                    as_attachment=True,
+                    download_name=f"{student_name}_{assignment_name}_report.pdf",
+                    mimetype='application/pdf'
+                )
+            except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
+                return render_template('upload.html', error=f'Error processing notebook: {str(e)}\n{error_details}')
         
         return render_template('upload.html', error='Invalid file format. Please upload .ipynb files only')
     
