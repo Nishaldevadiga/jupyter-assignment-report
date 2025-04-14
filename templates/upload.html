@@ -6,8 +6,8 @@
 </head>
 <body>
     <div class="container">
-        <h1>Grader</h1>
-        <p>Upload a Jupyter notebook (.ipynb) file to generate a PDF report.</p>
+        <h1>Jupyter Notebook LaTeX Report Generator</h1>
+        <p>Upload a Jupyter notebook (.ipynb) file to generate a LaTeX report.</p>
         
         {% if error %}
         <div class="error">{{ error }}</div>
@@ -29,8 +29,7 @@
                 <input type="file" id="notebook" name="notebook" accept=".ipynb" required>
             </div>
             
-            <button type="submit">Generate Report</button>
+            <button type="submit">Generate LaTeX Report</button>
         </form>
-    </div>
 </body>
 </html>
