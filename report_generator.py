@@ -1,143 +1,297 @@
 import json
 import base64
 from datetime import datetime
-from fpdf import FPDF
-from io import BytesIO
-from PIL import Image
 import tempfile
 import os
+import nbformat
+from nbconvert.preprocessors import ExecutePreprocessor
+import re
 
-class NotebookReportPDF(FPDF):
+class NotebookReportLaTeX:
     def __init__(self, student_name="", assignment_name=""):
-        super().__init__()
         self.student_name = student_name
         self.assignment_name = assignment_name
-        self.set_auto_page_break(auto=True, margin=15)
-        self.add_page()
-        self.set_font("Arial", "B", 16)
-        self.cell(0, 10, f"Jupyter Notebook Assignment Report", ln=True, align="C")
-        self.set_font("Arial", "", 12)
-        self.cell(0, 10, f"Student: {student_name}", ln=True)
-        self.cell(0, 10, f"Assignment: {assignment_name}", ln=True)
-        self.cell(0, 10, f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True)
-        self.ln(10)
-    
+        self.content = []
+        self.image_counter = 1
+        self.images_dir = "images"
+        
+        if not os.path.exists(self.images_dir):
+            os.makedirs(self.images_dir)
+        
+        self.add_preamble()
+        self.add_title()
+
+    def add_preamble(self):
+        preamble = r"""\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{hyperref}
+\usepackage{geometry}
+
+\geometry{margin=1in}
+
+\lstset{
+    backgroundcolor=\color{lightgray!30},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    captionpos=b,
+    commentstyle=\color{green},
+    frame=single,
+    keywordstyle=\color{blue},
+    showstringspaces=false,
+    stringstyle=\color{purple},
+}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=cyan,
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{Jupyter Notebook Report}
+\lhead{Generated: \today}
+\cfoot{\thepage}
+"""
+        self.content.append(preamble)
+
+    def add_title(self):
+        title_section = r"""
+\begin{document}
+
+\begin{center}
+\Large\textbf{Jupyter Notebook Assignment Report}
+
+\vspace{0.5cm}
+\normalsize
+Student: """ + self.student_name + r"""
+
+Assignment: """ + self.assignment_name + r"""
+
+Date: """ + datetime.now().strftime('%Y-%m-%d %H:%M') + r"""
+\end{center}
+
+\vspace{1cm}
+"""
+        self.content.append(title_section)
+
     def add_cell_marker(self, cell_type, cell_number):
-        self.set_font("Arial", "B", 12)
-        self.set_fill_color(220, 220, 220)
-        self.cell(0, 10, f"Cell {cell_number} ({cell_type})", ln=True, fill=True)
-        self.ln(5)
-    
+        marker = f"""
+\\vspace{{0.5cm}}
+\\noindent\\colorbox{{lightgray}}{{\\textbf{{Cell {cell_number} ({cell_type})}}}}
+\\vspace{{0.3cm}}
+"""
+        self.content.append(marker)
+
+    def _fix_code_special_chars(self, text):
+        """Handle special characters in code listings"""
+        if not isinstance(text, str):
+            text = str(text)
+        
+        # Process the code to handle LaTeX special characters in code
+        text = text.replace('\\', '\\\\')
+        
+        special_chars = {
+            '&': '\\&',
+            '%': '\\%',
+            '$': '\\$',
+            '#': '\\#',
+            '_': '\\_',
+            '{': '\\{',
+            '}': '\\}',
+            '^': '\\^{}',
+            '~': '\\~{}'
+        }
+        
+        for char, replacement in special_chars.items():
+            if char != '\\':
+                text = text.replace(char, replacement)
+        
+        return text
+
     def add_code(self, code):
-        self.set_font("Courier", "", 10)
-        self.set_fill_color(240, 240, 240)
-        self.multi_cell(0, 5, code, fill=True)
-        self.ln(5)
-    
+        code = self._fix_code_special_chars(code)
+        
+        listing = f"""
+\\begin{{lstlisting}}[language=Python]
+{code}
+\\end{{lstlisting}}
+"""
+        self.content.append(listing)
+
     def add_markdown(self, text):
-        self.set_font("Arial", "B", 12)  # Changed from 11 to 12 and added bold ("B")
-        self.set_fill_color(245, 245, 250)  # Very light blue/gray background
-        self.multi_cell(0, 5, text, fill=True)
-        self.ln(5)
-    
+        text = self._markdown_to_latex(text)
+        
+        markdown_section = f"""
+\\begin{{quote}}
+{text}
+\\end{{quote}}
+"""
+        self.content.append(markdown_section)
+
+    def add_raw(self, text, format_type=""):
+        text = self._escape_latex(text)
+        
+        raw_section = f"""
+\\begin{{quote}}
+\\textit{{Format: {format_type}}}
+
+\\begin{{verbatim}}
+{text}
+\\end{{verbatim}}
+\\end{{quote}}
+"""
+        self.content.append(raw_section)
+
     def add_output(self, output_text):
-        self.set_font("Courier", "", 10)
-        self.multi_cell(0, 5, output_text)
-        self.ln(5)
-    
+        output_section = f"""
+\\begin{{verbatim}}
+{output_text}
+\\end{{verbatim}}
+"""
+        self.content.append(output_section)
+
     def add_image(self, img_data):
         try:
-            # Create a temporary file for the image
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_file:
-                temp_filename = temp_file.name
+            if not os.path.exists(self.images_dir):
+                os.makedirs(self.images_dir)
                 
-                # Decode base64 image data and save to temporary file
-                image_data = base64.b64decode(img_data)
-                temp_file.write(image_data)
+            image_filename = f"image_{self.image_counter}.png"
+            full_image_path = os.path.join(self.images_dir, image_filename)
             
-            # Open the image with PIL to get dimensions
-            with Image.open(temp_filename) as pil_img:
-                # Calculate dimensions to fit page width while maintaining aspect ratio
-                page_width = self.w - 2 * self.l_margin
-                img_width = min(page_width, pil_img.width)
-                img_height = (pil_img.height * img_width) / pil_img.width
+            image_data = base64.b64decode(img_data)
+            with open(full_image_path, 'wb') as f:
+                f.write(image_data)
             
-            # Add the image to the PDF using the temporary file
-            x = self.l_margin + (page_width - img_width) / 2
-            self.image(temp_filename, x=x, w=img_width)
-            self.ln(5)
-            
-            # Clean up the temporary file
-            os.unlink(temp_filename)
+            image_section = f"""
+\\begin{{figure}}[h]
+\\centering
+\\includegraphics[width=0.8\\textwidth]{{{self.images_dir}/{image_filename}}}
+\\caption{{Output Image {self.image_counter}}}
+\\end{{figure}}
+"""
+            self.content.append(image_section)
+            self.image_counter += 1
             
         except Exception as e:
-            self.set_text_color(255, 0, 0)
-            self.multi_cell(0, 5, f"Error displaying image: {str(e)}")
-            self.set_text_color(0, 0, 0)
-            self.ln(5)
+            error_msg = f"Error displaying image: {str(e)}"
+            self.content.append(f"\\textcolor{{red}}{{{self._escape_latex(error_msg)}}}")
+
+    def _escape_latex(self, text):
+        if not isinstance(text, str):
+            text = str(text)
+            
+        special_chars = {
+            '&': '\\&',
+            '%': '\\%',
+            '$': '\\$',
+            '#': '\\#',
+            '_': '\\_',
+            '{': '\\{',
+            '}': '\\}',
+            '~': '\\textasciitilde{}',
+            '^': '\\textasciicircum{}',
+            '\\': '\\textbackslash{}'
+        }
+        
+        for char, replacement in special_chars.items():
+            text = text.replace(char, replacement)
+            
+        return text
+
+    def _markdown_to_latex(self, text):
+        text = self._escape_latex(text)
+        
+        text = re.sub(r'^# (.*?)$', r'\\section*{\1}', text, flags=re.MULTILINE)
+        text = re.sub(r'^## (.*?)$', r'\\subsection*{\1}', text, flags=re.MULTILINE)
+        text = re.sub(r'^### (.*?)$', r'\\subsubsection*{\1}', text, flags=re.MULTILINE)
+        
+        text = re.sub(r'\*\*(.*?)\*\*', r'\\textbf{\1}', text)
+        text = re.sub(r'\*(.*?)\*', r'\\textit{\1}', text)
+        
+        text = re.sub(r'^- (.*?)$', r'\\begin{itemize}\n\\item \1\n\\end{itemize}', text, flags=re.MULTILINE)
+        
+        text = re.sub(r'\[(.*?)\]\((.*?)\)', r'\\href{\2}{\1}', text)
+        
+        return text
+
+    def finalize(self):
+        self.content.append("\n\\end{document}")
+        return '\n'.join(self.content)
 
 def process_notebook(notebook_file, student_name, assignment_name):
-    # Load the notebook
     if isinstance(notebook_file, str):
         with open(notebook_file, 'r', encoding='utf-8') as f:
-            notebook_content = json.load(f)
+            nb = nbformat.read(f, as_version=4)
     else:
-        notebook_content = json.load(notebook_file)
+        nb = nbformat.read(notebook_file, as_version=4)
     
-    # Create PDF
-    pdf = NotebookReportPDF(student_name, assignment_name)
+    if isinstance(notebook_file, str):
+        notebook_dir = os.path.dirname(os.path.abspath(notebook_file))
+    else:
+        notebook_dir = os.getcwd()
     
-    # Process each cell
-    for i, cell in enumerate(notebook_content.get('cells', [])):
+    ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
+    
+    try:
+        resources = {
+            'metadata': {'path': notebook_dir},
+        }
+        
+        executed_nb, _ = ep.preprocess(nb, resources)
+        print(f"Successfully executed notebook with {len(executed_nb.cells)} cells")
+        nb = executed_nb
+    except Exception as e:
+        print(f"Error executing notebook: {str(e)}")
+        print("Continuing with non-executed notebook for LaTeX generation")
+
+    latex_report = NotebookReportLaTeX(student_name, assignment_name)
+
+    for i, cell in enumerate(nb.get('cells', [])):
         cell_type = cell.get('cell_type', 'unknown')
         cell_number = i + 1
-        
-        # Add cell marker
-        pdf.add_cell_marker(cell_type, cell_number)
-        
-        # Process based on cell type
+
+        latex_report.add_cell_marker(cell_type, cell_number)
+
         if cell_type == 'code':
-            # Add code content
             source = ''.join(cell.get('source', []))
-            pdf.add_code(source)
-            
-            # Process outputs
+            latex_report.add_code(source)
+
             outputs = cell.get('outputs', [])
             for output in outputs:
                 output_type = output.get('output_type', '')
-                
-                # Text output
+
                 if output_type == 'stream':
-                    pdf.add_output(f"{output.get('name', 'output')}: {''.join(output.get('text', []))}")
-                
-                # Display data (often contains images)
-                elif output_type == 'display_data' or output_type == 'execute_result':
+                    latex_report.add_output(f"{output.get('name', 'output')}: {''.join(output.get('text', []))}")
+                elif output_type in ('display_data', 'execute_result'):
                     data = output.get('data', {})
-                    
-                    # Handle text/plain output
                     if 'text/plain' in data:
                         text_content = ''.join(data['text/plain']) if isinstance(data['text/plain'], list) else data['text/plain']
-                        pdf.add_output(text_content)
-                    
-                    # Handle images
+                        latex_report.add_output(text_content)
                     if 'image/png' in data:
-                        pdf.add_image(data['image/png'])
-                    
-                    # Skip HTML output instead of displaying it
-                    # This removes the "HTML Output: ..." text
-                        
-                # Error output
+                        latex_report.add_image(data['image/png'])
                 elif output_type == 'error':
                     error_name = output.get('ename', 'Error')
                     error_value = output.get('evalue', '')
                     traceback = '\n'.join(output.get('traceback', []))
-                    pdf.set_text_color(255, 0, 0)
-                    pdf.add_output(f"{error_name}: {error_value}\n{traceback}")
-                    pdf.set_text_color(0, 0, 0)
-        
+                    error_text = f"{error_name}: {error_value}\n{traceback}"
+                    latex_report.add_output(error_text)
+
         elif cell_type == 'markdown':
-            # Process markdown content
             markdown_text = ''.join(cell.get('source', []))
-            pdf.add_markdown(markdown_text)
-    
-    return pdf
+            latex_report.add_markdown(markdown_text)
+            
+        elif cell_type == 'raw':
+            raw_text = ''.join(cell.get('source', []))
+            metadata = cell.get('metadata', {})
+            format_type = metadata.get('format', '')
+            if isinstance(format_type, list):
+                format_type = ', '.join(format_type)
+            latex_report.add_raw(raw_text, format_type)
+
+    return latex_report.finalize()
